@@ -33,26 +33,33 @@ app.post("/api/parse-recipe", async (req, res) => {
     let response;
 
     if (mode === "image") {
-      // Vision mode — send image as base64 to gpt-4o
-      const imageUrl = `data:image/jpeg;base64,${input}`;
-      response = await client.responses.create({
+      // Vision mode — use Chat Completions API with gpt-4o (well-supported for base64 images)
+      const chatResponse = await client.chat.completions.create({
         model: "gpt-4o",
-        input: [
+        max_tokens: 1500,
+        messages: [
           {
             role: "user",
             content: [
               {
-                type: "input_text",
+                type: "text",
                 text: `You are a recipe extraction assistant. Look at this image carefully — it may be a photo of a cookbook page, a recipe card, or a screenshot of a recipe.\n\nExtract all recipe information visible in the image and return ONLY valid JSON in this exact format:\n${RECIPE_JSON_SCHEMA}\n\nIf a field is not visible in the image, use an empty string or empty array. Do not add any text outside the JSON.`,
               },
               {
-                type: "input_image",
-                image_url: imageUrl,
+                type: "image_url",
+                image_url: {
+                  url: `data:image/jpeg;base64,${input}`,
+                  detail: "high",
+                },
               },
             ],
           },
         ],
       });
+      const text = chatResponse.choices[0].message.content;
+      const cleaned = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
+      const parsed = JSON.parse(cleaned);
+      return res.json(parsed);
     } else {
       // Text modes (search, url, social)
       const prompt = `You are a recipe extraction assistant.\n\nReturn ONLY valid JSON in this format:\n${RECIPE_JSON_SCHEMA}\n\nInput mode: ${mode}\nInput:\n${input}`;
