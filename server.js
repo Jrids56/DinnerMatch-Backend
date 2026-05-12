@@ -77,12 +77,12 @@ app.post("/api/parse-recipe", async (req, res) => {
     res.json(parsed);
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: "Failed to parse recipe" });
+    res.status(500).json({ error: err.message || "Failed to parse recipe" });
   }
 });
 
 app.get("/test", (req, res) => {
-  res.json({ ok: true });
+  res.json({ ok: true, version: "v3-vision" });
 });
 
 const port = process.env.PORT || 3001;
