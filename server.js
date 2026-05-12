@@ -133,6 +133,18 @@ app.post("/api/parse-recipe", async (req, res) => {
   }
 });
 
+// Temporary endpoint — used once to compute starter recipe macros, will be removed
+app.post("/api/nutrition", async (req, res) => {
+  try {
+    const { ingredients } = req.body;
+    const macros = await getNutrition(ingredients);
+    if (!macros) return res.status(500).json({ error: "Nutrition lookup failed" });
+    res.json(macros);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get("/test", (req, res) => {
   res.json({ ok: true, version: "v4-nutrition" });
 });
