@@ -26,14 +26,66 @@ const RECIPE_JSON_SCHEMA = `{
   "confidence": 0
 }`;
 
+// Fetch real nutrition data from Edamam using the parsed ingredient list
+async function getNutrition(ingredients) {
+  const appId = process.env.EDAMAM_APP_ID;
+  const appKey = process.env.EDAMAM_APP_KEY;
+  if (!appId || !appKey || !ingredients?.length) return null;
+
+  // Format ingredients as plain strings e.g. "2 cups flour", "1 chicken breast"
+  const ingr = ingredients.map((i) => {
+    const qty = i.quantity ? String(i.quantity).trim() : "";
+    const item = i.item ? String(i.item).trim() : "";
+    return qty ? `${qty} ${item}` : item;
+  }).filter(Boolean);
+
+  if (!ingr.length) return null;
+
+  try {
+    const resp = await fetch(
+      `https://api.edamam.com/api/nutrition-details?app_id=${appId}&app_key=${appKey}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ingr }),
+      }
+    );
+
+    if (!resp.ok) {
+      const errText = await resp.text();
+      console.error("Edamam error:", resp.status, errText);
+      return null;
+    }
+
+    const data = await resp.json();
+    const kcal = Math.round(data.calories || 0);
+    const protein = Math.round(data.totalNutrients?.PROCNT?.quantity || 0);
+    const fat = Math.round(data.totalNutrients?.FAT?.quantity || 0);
+
+    return {
+      kcal: String(kcal),
+      protein: `${protein}g`,
+      fat: `${fat}g`,
+    };
+  } catch (err) {
+    console.error("Edamam fetch failed:", err.message);
+    return null;
+  }
+}
+
+async function parseAndEnrich(parsed) {
+  const macros = await getNutrition(parsed.ingredients);
+  return { ...parsed, macros: macros || { kcal: "", protein: "", fat: "" } };
+}
+
 app.post("/api/parse-recipe", async (req, res) => {
   try {
     const { mode, input } = req.body;
 
-    let response;
+    let parsed;
 
     if (mode === "image") {
-      // Vision mode — use Chat Completions API with gpt-4o (well-supported for base64 images)
+      // Vision mode — use Chat Completions API with gpt-4o
       const chatResponse = await client.chat.completions.create({
         model: "gpt-4o",
         max_tokens: 1500,
@@ -58,23 +110,23 @@ app.post("/api/parse-recipe", async (req, res) => {
       });
       const text = chatResponse.choices[0].message.content;
       const cleaned = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
-      const parsed = JSON.parse(cleaned);
-      return res.json(parsed);
+      parsed = JSON.parse(cleaned);
     } else {
-      // Text modes (search, url, social)
+      // Text modes: search, url, social
       const prompt = `You are a recipe extraction assistant.\n\nReturn ONLY valid JSON in this format:\n${RECIPE_JSON_SCHEMA}\n\nInput mode: ${mode}\nInput:\n${input}`;
-      response = await client.responses.create({
+      const response = await client.responses.create({
         model: "gpt-4.1-mini",
         input: prompt,
       });
+      const text = response.output_text;
+      const cleaned = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
+      parsed = JSON.parse(cleaned);
     }
 
-    const text = response.output_text;
-    // Strip markdown code fences if model wraps the JSON
-    const cleaned = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
-    const parsed = JSON.parse(cleaned);
+    // Enrich with real nutrition data from Edamam
+    const enriched = await parseAndEnrich(parsed);
+    res.json(enriched);
 
-    res.json(parsed);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err.message || "Failed to parse recipe" });
@@ -82,7 +134,7 @@ app.post("/api/parse-recipe", async (req, res) => {
 });
 
 app.get("/test", (req, res) => {
-  res.json({ ok: true, version: "v3-vision" });
+  res.json({ ok: true, version: "v4-nutrition" });
 });
 
 const port = process.env.PORT || 3001;
