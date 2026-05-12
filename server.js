@@ -58,9 +58,25 @@ async function getNutrition(ingredients) {
     }
 
     const data = await resp.json();
-    const kcal = Math.round(data.calories || 0);
-    const protein = Math.round(data.totalNutrients?.PROCNT?.quantity || 0);
-    const fat = Math.round(data.totalNutrients?.FAT?.quantity || 0);
+
+    // Prefer top-level aggregate if present
+    let kcal = Math.round(data.calories || 0);
+    let protein = Math.round(data.totalNutrients?.PROCNT?.quantity || 0);
+    let fat = Math.round(data.totalNutrients?.FAT?.quantity || 0);
+
+    // Fallback: sum nutrients from each parsed ingredient
+    if (kcal === 0 && protein === 0) {
+      for (const ing of (data.ingredients || [])) {
+        for (const parsed of (ing.parsed || [])) {
+          kcal    += parsed.nutrients?.ENERC_KCAL?.quantity || 0;
+          protein += parsed.nutrients?.PROCNT?.quantity     || 0;
+          fat     += parsed.nutrients?.FAT?.quantity        || 0;
+        }
+      }
+      kcal    = Math.round(kcal);
+      protein = Math.round(protein);
+      fat     = Math.round(fat);
+    }
 
     return {
       kcal: String(kcal),
@@ -137,23 +153,9 @@ app.post("/api/parse-recipe", async (req, res) => {
 app.post("/api/nutrition", async (req, res) => {
   try {
     const { ingredients } = req.body;
-    const appId = process.env.EDAMAM_APP_ID;
-    const appKey = process.env.EDAMAM_APP_KEY;
-
-    const ingr = ingredients.map((i) => {
-      const qty = i.quantity ? String(i.quantity).trim() : "";
-      const item = i.item ? String(i.item).trim() : "";
-      return qty ? `${qty} ${item}` : item;
-    }).filter(Boolean);
-
-    const resp = await fetch(
-      `https://api.edamam.com/api/nutrition-details?app_id=${appId}&app_key=${appKey}`,
-      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ingr }) }
-    );
-
-    const raw = await resp.json();
-    // Return full raw response for debugging
-    res.json({ status: resp.status, appIdPresent: !!appId, appKeyPresent: !!appKey, ingr, raw });
+    const macros = await getNutrition(ingredients);
+    if (!macros) return res.status(500).json({ error: "Nutrition lookup failed" });
+    res.json(macros);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
