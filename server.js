@@ -22,77 +22,14 @@ const RECIPE_JSON_SCHEMA = `{
   "ingredients": [
     { "item": "string", "quantity": "string" }
   ],
+  "macros": {
+    "kcal": "string (estimated total calories as a plain number e.g. 650)",
+    "protein": "string (estimated protein in grams e.g. 42g)",
+    "fat": "string (estimated fat in grams e.g. 18g)"
+  },
   "sourceType": "string",
   "confidence": 0
 }`;
-
-// Fetch real nutrition data from Edamam using the parsed ingredient list
-async function getNutrition(ingredients) {
-  const appId = process.env.EDAMAM_APP_ID;
-  const appKey = process.env.EDAMAM_APP_KEY;
-  if (!appId || !appKey || !ingredients?.length) return null;
-
-  // Format ingredients as plain strings e.g. "2 cups flour", "1 chicken breast"
-  const ingr = ingredients.map((i) => {
-    const qty = i.quantity ? String(i.quantity).trim() : "";
-    const item = i.item ? String(i.item).trim() : "";
-    return qty ? `${qty} ${item}` : item;
-  }).filter(Boolean);
-
-  if (!ingr.length) return null;
-
-  try {
-    const resp = await fetch(
-      `https://api.edamam.com/api/nutrition-details?app_id=${appId}&app_key=${appKey}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ingr }),
-      }
-    );
-
-    if (!resp.ok) {
-      const errText = await resp.text();
-      console.error("Edamam error:", resp.status, errText);
-      return null;
-    }
-
-    const data = await resp.json();
-
-    // Prefer top-level aggregate if present
-    let kcal = Math.round(data.calories || 0);
-    let protein = Math.round(data.totalNutrients?.PROCNT?.quantity || 0);
-    let fat = Math.round(data.totalNutrients?.FAT?.quantity || 0);
-
-    // Fallback: sum nutrients from each parsed ingredient
-    if (kcal === 0 && protein === 0) {
-      for (const ing of (data.ingredients || [])) {
-        for (const parsed of (ing.parsed || [])) {
-          kcal    += parsed.nutrients?.ENERC_KCAL?.quantity || 0;
-          protein += parsed.nutrients?.PROCNT?.quantity     || 0;
-          fat     += parsed.nutrients?.FAT?.quantity        || 0;
-        }
-      }
-      kcal    = Math.round(kcal);
-      protein = Math.round(protein);
-      fat     = Math.round(fat);
-    }
-
-    return {
-      kcal: String(kcal),
-      protein: `${protein}g`,
-      fat: `${fat}g`,
-    };
-  } catch (err) {
-    console.error("Edamam fetch failed:", err.message);
-    return null;
-  }
-}
-
-async function parseAndEnrich(parsed) {
-  const macros = await getNutrition(parsed.ingredients);
-  return { ...parsed, macros: macros || { kcal: "", protein: "", fat: "" } };
-}
 
 app.post("/api/parse-recipe", async (req, res) => {
   try {
@@ -139,9 +76,7 @@ app.post("/api/parse-recipe", async (req, res) => {
       parsed = JSON.parse(cleaned);
     }
 
-    // Enrich with real nutrition data from Edamam
-    const enriched = await parseAndEnrich(parsed);
-    res.json(enriched);
+    res.json(parsed);
 
   } catch (err) {
     console.error(err);
