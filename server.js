@@ -137,9 +137,23 @@ app.post("/api/parse-recipe", async (req, res) => {
 app.post("/api/nutrition", async (req, res) => {
   try {
     const { ingredients } = req.body;
-    const macros = await getNutrition(ingredients);
-    if (!macros) return res.status(500).json({ error: "Nutrition lookup failed" });
-    res.json(macros);
+    const appId = process.env.EDAMAM_APP_ID;
+    const appKey = process.env.EDAMAM_APP_KEY;
+
+    const ingr = ingredients.map((i) => {
+      const qty = i.quantity ? String(i.quantity).trim() : "";
+      const item = i.item ? String(i.item).trim() : "";
+      return qty ? `${qty} ${item}` : item;
+    }).filter(Boolean);
+
+    const resp = await fetch(
+      `https://api.edamam.com/api/nutrition-details?app_id=${appId}&app_key=${appKey}`,
+      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ingr }) }
+    );
+
+    const raw = await resp.json();
+    // Return full raw response for debugging
+    res.json({ status: resp.status, appIdPresent: !!appId, appKeyPresent: !!appKey, ingr, raw });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
